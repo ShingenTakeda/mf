@@ -1,5 +1,6 @@
 #include <esp_log.h>
 #include "mesh_network.h"
+#include "net_tasks.h"
 
 #define DEFAULT_SCAN_METHOD WIFI_FAST_SCAN
 #define DEFAULT_SORT_METHOD WIFI_CONNECT_AP_BY_SIGNAL
@@ -8,7 +9,7 @@
 
 #define NET_SSID "ValenteTakeda"
 #define NET_PASSWD "ackmakVT96"
-#define MESH_PASSWD "meterfarm"
+#define MESH_PASSWD "meterfarm1"
 
 QueueHandle_t mesh_send_q;
 QueueHandle_t mesh_rcv_q;
@@ -19,10 +20,11 @@ esp_netif_t *netif_sta = NULL;
 
 void ip_events(void *args, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
+    net_wifi_ip_address_clear();
     ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-    ESP_LOGI(NET_TAG, "<IP_EVENT_STA_GET> IP:" IPSTR, IP2STR(&event->ip_info.ip));
+    net_wifi_ip_address_save(event->ip_info.ip);
+    ESP_LOGI(NET_TAG, "got ip: %s broadcast: %s", wifi_ip_address, wifi_ip_broadcast);
 }
-
 
 bool is_mesh_parent_connected()
 {
@@ -67,19 +69,14 @@ void mesh_rcv_p2p_task()
 void mesh_send_p2p_task()
 {
     
-} 
+}
 
 void wifi_events(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
-    switch(event_id)
+    ESP_LOGI(NET_TAG, "Received event: %s %" PRId32, event_base, event_id);
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START)
     {
-        case WIFI_EVENT_STA_CONNECTED:
-            ESP_LOGI(NET_TAG, "<WIFI_EVENT_STA_CONNECTED>");
-        break;
-
-        case WIFI_EVENT_STA_DISCONNECTED:
-            ESP_LOGI(NET_TAG, "<WIFI_EVENT_STA_DISCONNECTED>");
-        break;
+        net_wifi_ip_address_clear();
     }
 }
 
@@ -97,7 +94,7 @@ void mesh_init()
     memcpy((uint8_t *) &config.router.password, NET_PASSWD, strlen(NET_PASSWD));
 
     config.mesh_ap.max_connection = 2;
-    config.mesh_ap.nonmesh_max_connection = 1;
+    config.mesh_ap.nonmesh_max_connection = 2;
 
     memcpy((uint8_t *)&config.mesh_ap.password, MESH_PASSWD, strlen(MESH_PASSWD));
 
@@ -120,15 +117,14 @@ void wifi_init()
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
+    ESP_ERROR_CHECK(esp_netif_create_default_wifi_mesh_netifs(&netif_sta, NULL));
+    assert(netif_sta);
+
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_events, NULL, NULL));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &ip_events, NULL, NULL));
-
-    // Initialize default station as network interface instance (esp-netif)
-    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
-    assert(sta_netif);
 
     // Initialize and start WiFi
     wifi_config_t wifi_config = {

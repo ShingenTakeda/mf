@@ -83,3 +83,6 @@ extern TaskHandle_t mesh_send_t_handle;
 
 extern TaskHandle_t net_client_t_handle;
 extern TaskHandle_t net_server_t_handle;
+
+extern char *wifi_ip_address;
+extern char *wifi_ip_broadcast;

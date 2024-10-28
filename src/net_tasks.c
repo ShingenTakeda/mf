@@ -61,16 +61,7 @@ void net_client_task(void *args)
 
     while(1)
     {
-        /*
-        if(esp_mesh_recv(&sender, &data, portMAX_DELAY, &flag, NULL, 0) == ESP_OK)
-        {
-            asprintf(&tx_buf, "remetente: "MACSTR", msg: %s\n", MAC2STR(sender.addr), data.data); // prepara buffer para envio
-            ESP_LOGI(MESH_TAG, "%s", tx_buf); // imprime buffer nos logs
-            sendto(sock, tx_buf, strlen(tx_buf), 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr)); // enviar buffer para servidor remoto
-            free(tx_buf);
-        }
-        */
-
+        
     }
 
     vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -78,44 +69,95 @@ void net_client_task(void *args)
 
 void net_server_task(void *args)
 {
-    uint8_t buffer[BUFF_SIZE] = {0};
-    mesh_data_t data;
-    data.data = buffer;
-    data.size = BUFF_SIZE;
+    char rx_buffer[BUFF_SIZE];
+    char addr_str[128];
+    int addr_family = AF_INET;
+    int ip_protocol = 0;
+    struct sockaddr_in6 dest_addr;
+    int PORT = CLIENT_PORT;
 
-    struct sockaddr_storage source_addr;
-    socklen_t socklen = sizeof(source_addr);
-
-    struct sockaddr_in dest_addr = 
+    while (1)
     {
-        .sin_addr.s_addr = inet_addr("0.0.0.0"),
-        .sin_family = AF_INET,
-        .sin_port = htons(CLIENT_PORT)
-    };
 
-    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+        struct sockaddr_in *dest_addr_ip4 = (struct sockaddr_in *)&dest_addr;
+        dest_addr_ip4->sin_addr.s_addr = htonl(INADDR_ANY);
+        dest_addr_ip4->sin_family = AF_INET;
 
-    struct timeval timeout;
-    timeout.tv_sec = 10;
-    timeout.tv_usec = 0;
-    setsockopt (sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+        dest_addr_ip4->sin_port = htons(PORT);
+        ip_protocol = IPPROTO_IP;
 
-    bind(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+        int sock = socket(addr_family, SOCK_DGRAM, ip_protocol);
+        if (sock < 0)
+        {
+            ESP_LOGE(NET_TAG, "Unable to create socket: errno %d", errno);
+            break;
+        }
+        ESP_LOGI(NET_TAG, "Socket created");
 
-    while(1)
-    {
-        recvfrom(sock, buffer, sizeof(buffer) - 1, 0, (struct sockaddr *) &source_addr, &socklen);
-        ESP_LOGI(MESH_TAG, "%s", buffer);
+        // Set timeout
+        struct timeval timeout;
+        timeout.tv_sec = 60;
+        timeout.tv_usec = 0;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
 
-        //Clear buffer
-        memset(buffer, 0, sizeof(buffer));
+        int err = bind(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+        if (err < 0)
+        {
+            ESP_LOGE(NET_TAG, "Socket unable to bind: errno %d", errno);
+        }
+        ESP_LOGI(NET_TAG, "Socket bound, port %d", PORT);
+
+        struct sockaddr_storage source_addr;
+        socklen_t socklen = sizeof(source_addr);
+
+        while (1)
+        {
+            ESP_LOGI(NET_TAG, "Waiting for data");
+            int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0, (struct sockaddr *)&source_addr, &socklen);
+            // Error occurred during receiving
+            if (len < 0)
+            {
+                ESP_LOGI(NET_TAG, "recvfrom failed: errno %d", errno);
+                break;
+            }
+            // Data received
+            else
+            {
+                // Get the sender's ip address as string
+                if (source_addr.ss_family == PF_INET)
+                {
+                    inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr, addr_str, sizeof(addr_str) - 1);
+                }
+                rx_buffer[len] = 0; // Null-terminate whatever we received and treat like a string...
+                ESP_LOGI(NET_TAG, "Received %d bytes from %s:", len, addr_str);
+                ESP_LOGI(NET_TAG, "%s", rx_buffer);
+
+                // Sending back the same message to acknowledge delivery
+                int err = sendto(sock, rx_buffer, len, 0, (struct sockaddr *)&source_addr, sizeof(source_addr));
+                if (err < 0)
+                {
+                    ESP_LOGE(NET_TAG, "Error occurred during sending: errno %d", errno);
+                    break;
+                }
+            }
+        }
+
+        if (sock != -1)
+        {
+            ESP_LOGI(NET_TAG, "Shutting down socket and restarting...");
+            shutdown(sock, 0);
+            close(sock);
+        }
     }
-
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    vTaskDelete(NULL);
 }
 
 void net_system_init()
 {
+    if(net_server_t_handle == NULL)
+    {
+        xTaskCreatePinnedToCore(net_server_task, "UDP SERVER TASK", 4096, NULL, 3, net_server_t_handle, 0);
+    }
 }
 
 void net_system_deinit()

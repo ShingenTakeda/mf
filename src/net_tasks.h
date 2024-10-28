@@ -5,5 +5,6 @@
 
 void net_system_init();
 void net_system_deinit();
+
+void net_wifi_ip_address_save(esp_ip4_addr_t ip);
 void net_wifi_ip_address_clear();
-void net_wifi_ip_addrees_save(esp_ip4_addr_t ip);
